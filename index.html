@@ -52,7 +52,7 @@
   .entry-header { display: flex; justify-content: space-between; align-items: center; }
   .entry-card.has-error { border: 2px solid #c0392b; background: #fffafa; }
   .err-msg { padding: 7px 10px; background: #fdecea; border: 1px solid #f1b7ae; border-radius: 6px; font-size: 12.5px; line-height: 1.7; color: #9b2316; font-weight: 600; }
-  input.time-err { border-color: #c0392b !important; background: #fff3f1; }
+  input.time-err, select.time-err { border-color: #c0392b !important; background: #fff3f1; }
   .entry-header span { font-size: 13px; font-weight: 600; }
   .del-btn {
     background: none; border: 1px solid #ccc; border-radius: 6px;
@@ -118,7 +118,7 @@
     <li style="margin-bottom:6px;"><b>滞在した場所</b>：滞在した地点では、その場所で行った活動を「主な活動」から選んでください。同じ場所で複数の活動をした場合は、<b>「＋ 別の活動を追加」</b>で他の活動と所要時間を選んでください。</li>
     <li style="margin-bottom:6px;"><b>時刻：活動を行った箇所については、「この地点に着いた時刻」と「この地点を離れた時刻」を入力してください。特に、最初の地点は着いた時刻を、最後の地点は離れた時刻を必ず入力してください。<span style="color:#c0392b;background:#fdecea;padding:0 3px;border-radius:3px;">通過のみの地点は時刻の入力は不要です。</span></b>
       <div style="margin-top:4px;font-size:12.5px;line-height:1.7;"><b>午前・午後を間違えないように</b>入力してください（午後1時は「13:00」、午前・午後を選ぶ画面では「午後 1:00」または「01:00 PM」）。時刻は地点の順に後になるように入力してください。泊まり込みなどで<b>日付をまたいで翌日に帰った場合</b>は、最後の地点で「日付をまたいで、翌日に帰った」にチェックを入れてください。2日以上続けて帰らなかった場合は、翌日の分までを記録し、翌日の最後にいた場所を最後の地点としてください。</div></li>
-    <li><b>好意度</b>：「通過のみ」以外の活動を選んだ場合は、その場所への好意度を入力してください。</li>
+    <li><b>好意度</b>：「通過のみ」以外の活動を選んだ場合は、その場所への好意度を<b>必ず</b>選んでください。</li>
   </ol>
   <div style="margin-top:12px;padding-top:12px;border-top:1px dashed #cddff0;">
     <div style="font-weight:700;font-size:13.5px;color:#14507f;margin-bottom:8px;">記入例（経路の刺し方）</div>
@@ -421,6 +421,7 @@
       if(e.activity==='通過のみ') return;
       if(!e.arrive) add(e,'arrive','滞在した地点です。「この地点に着いた時刻」を入力してください。');
       if(!e.depart) add(e,'depart','滞在した地点です。「この地点を離れた時刻」を入力してください。');
+      if(!e.favorability) add(e,'fav','滞在した地点です。「この場所への好意度」を選んでください。');
     });
     // 2・3. 時刻を地点の順に並べて検査（同じ地点内は離れた≧着いた、地点間は前の時刻−1分まで認める）
     var offset = 0, prev = null, wrapped = false;
@@ -465,8 +466,18 @@
     return list;
   }
 
-  function render(){
+  // 理由の記入欄を閉じて「次に進む」に戻す（経路を直したとき）
+  function closeReasonPanel(){
     var rp=document.getElementById('reason-panel'); if(rp) rp.style.display='none';
+    submitBtn.style.display='';
+  }
+  function openReasonPanel(){
+    var rp=document.getElementById('reason-panel'); rp.style.display='block';
+    submitBtn.style.display='none';
+  }
+
+  function render(){
+    closeReasonPanel();
     // 経路線
     routeLines.innerHTML='';
     for(let i=0;i<entries.length-1;i++){
@@ -537,7 +548,7 @@
         chk.style.cssText='display:flex;align-items:flex-start;gap:8px;margin:0 0 6px;padding:9px 10px;background:#fff;border:1px solid #d9bdb7;border-radius:6px;font-size:12.5px;line-height:1.65;cursor:pointer;font-weight:500;color:#1a1a1a;';
         const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=!!e.boarded;
         cb.style.cssText='margin-top:2px;width:17px;height:17px;flex:0 0 auto;';
-        cb.onchange=function(){ e.boarded=cb.checked; };
+        cb.onchange=function(){ e.boarded=cb.checked; closeReasonPanel(); };
         const cbTxt=document.createElement('span');
         cbTxt.innerHTML='この地点で<b>帰るための通学手段に乗りました</b>';
         chk.appendChild(cb); chk.appendChild(cbTxt);
@@ -549,7 +560,7 @@
         ochk.style.cssText='display:flex;align-items:flex-start;gap:8px;margin:0 0 6px;padding:9px 10px;background:#fff;border:1px solid #cfd8e3;border-radius:6px;font-size:12.5px;line-height:1.65;cursor:pointer;font-weight:500;color:#1a1a1a;';
         const ocb=document.createElement('input'); ocb.type='checkbox'; ocb.checked=!!e.overnight;
         ocb.style.cssText='margin-top:2px;width:17px;height:17px;flex:0 0 auto;';
-        ocb.onchange=function(){ e.overnight=ocb.checked; clearErr(e, card); };
+        ocb.onchange=function(){ e.overnight=ocb.checked; clearErr(e, card); closeReasonPanel(); };
         const ocbTxt=document.createElement('span');
         ocbTxt.innerHTML='<b>日付をまたいで、翌日に帰った</b>（研究室に泊まった・徹夜した など）<br><span style="font-size:11.5px;color:#555;">チェックすると、0時を過ぎた時刻を翌日の時刻として扱います。</span>';
         ochk.appendChild(ocb); ochk.appendChild(ocbTxt);
@@ -563,7 +574,7 @@
         const label=document.createElement('label'); label.textContent=labelText;
         const input=document.createElement('input'); input.type='time'; input.value=value||'';
         if(errMap[e.id] && errMap[e.id].fields.indexOf(field)>=0) input.classList.add('time-err');
-        input.onchange=function(){ e[field]=input.value; input.classList.remove('time-err'); clearErr(e, card); };
+        input.onchange=function(){ e[field]=input.value; input.classList.remove('time-err'); clearErr(e, card); closeReasonPanel(); };
         wrap.appendChild(label); wrap.appendChild(input);
         return wrap;
       }
@@ -641,7 +652,8 @@
         const favSelect=document.createElement('select'); favSelect.style.width='100%';
         const favOptions=[ {v:'',t:'-- 選択してください --'}, {v:'1',t:'1（全く好きではない）'}, {v:'2',t:'2'}, {v:'3',t:'3'}, {v:'4',t:'4'}, {v:'5',t:'5（非常に好き）'} ];
         favOptions.forEach(function(opt){ const o=document.createElement('option'); o.value=opt.v; o.textContent=opt.t; if(opt.v===e.favorability) o.selected=true; favSelect.appendChild(o); });
-        favSelect.onchange=function(){ e.favorability=favSelect.value; };
+        if(errMap[e.id] && errMap[e.id].fields.indexOf('fav')>=0) favSelect.classList.add('time-err');
+        favSelect.onchange=function(){ e.favorability=favSelect.value; favSelect.classList.remove('time-err'); clearErr(e, card); closeReasonPanel(); };
         favWrap.appendChild(favLabel); favWrap.appendChild(favSelect);
         card.appendChild(favWrap);
       }
@@ -696,10 +708,9 @@
     errMap = vr.errs;
     var errIds = Object.keys(errMap);
     if(errIds.length){
-      document.getElementById('reason-panel').style.display='none';
       render();
       var nums = entries.map(function(e,i){ return errMap[e.id] ? (i+1) : null; }).filter(function(x){ return x!=null; });
-      alert('時刻の入力に誤りがあります（地点 ' + nums.join('・') + '）。\n赤枠の地点の説明に従って修正してから、もう一度押してください。');
+      alert('時刻・好意度の入力に不備があります（地点 ' + nums.join('・') + '）。\n赤枠の地点の説明に従って修正してから、もう一度押してください。');
       var firstCard = list.querySelector('.entry-card.has-error');
       if(firstCard) firstCard.scrollIntoView({behavior:'smooth', block:'center'});
       return;
@@ -743,7 +754,7 @@
     if(maxF===minF){ document.getElementById('reason-low').style.display='none'; }
     else { document.getElementById('reason-low').style.display=''; buildPick('low-pick-wrap','lowPick', favStays.filter(function(o){ return o.f===minF; })); }
     ['high-reason','high-purpose','high-action','low-reason','low-purpose','low-action'].forEach(function(id){ document.getElementById(id).value=''; });
-    document.getElementById('reason-panel').style.display='block';
+    openReasonPanel();
     document.getElementById('reason-panel').scrollIntoView({behavior:'smooth', block:'nearest'});
   });
 
