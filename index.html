@@ -50,6 +50,9 @@
     padding: 10px 12px; display: flex; flex-direction: column; gap: 8px;
   }
   .entry-header { display: flex; justify-content: space-between; align-items: center; }
+  .entry-card.has-error { border: 2px solid #c0392b; background: #fffafa; }
+  .err-msg { padding: 7px 10px; background: #fdecea; border: 1px solid #f1b7ae; border-radius: 6px; font-size: 12.5px; line-height: 1.7; color: #9b2316; font-weight: 600; }
+  input.time-err { border-color: #c0392b !important; background: #fff3f1; }
   .entry-header span { font-size: 13px; font-weight: 600; }
   .del-btn {
     background: none; border: 1px solid #ccc; border-radius: 6px;
@@ -113,7 +116,8 @@
       <div style="margin-top:7px; font-size:12.5px; color:#b32d1f; font-weight:600;">途中でまだ別の場所に立ち寄る場合は、そこは最後のピンではありません。立ち寄り先も記録したうえで、<b>最後に乗った場所</b>にピンを刺してください。</div>
     </li>
     <li style="margin-bottom:6px;"><b>滞在した場所</b>：滞在した地点では、その場所で行った活動を「主な活動」から選んでください。同じ場所で複数の活動をした場合は、<b>「＋ 別の活動を追加」</b>で他の活動と所要時間を選んでください。</li>
-    <li style="margin-bottom:6px;"><b>時刻：活動を行った箇所については、その到着時刻と出発時刻を入力してください。特に、最初の地点は到着時刻を、最後の地点は出発時刻を必ず入力してください。<span style="color:#c0392b;background:#fdecea;padding:0 3px;border-radius:3px;">通過のみの地点は時刻の入力は不要です。</span></b></li>
+    <li style="margin-bottom:6px;"><b>時刻：活動を行った箇所については、「この地点に着いた時刻」と「この地点を離れた時刻」を入力してください。特に、最初の地点は着いた時刻を、最後の地点は離れた時刻を必ず入力してください。<span style="color:#c0392b;background:#fdecea;padding:0 3px;border-radius:3px;">通過のみの地点は時刻の入力は不要です。</span></b>
+      <div style="margin-top:4px;font-size:12.5px;line-height:1.7;"><b>午前・午後を間違えないように</b>入力してください（午後1時は「13:00」、午前・午後を選ぶ画面では「午後 1:00」または「01:00 PM」）。時刻は地点の順に後になるように入力してください。泊まり込みなどで<b>日付をまたいで翌日に帰った場合</b>は、最後の地点で「日付をまたいで、翌日に帰った」にチェックを入れてください。2日以上続けて帰らなかった場合は、翌日の分までを記録し、翌日の最後にいた場所を最後の地点としてください。</div></li>
     <li><b>好意度</b>：「通過のみ」以外の活動を選んだ場合は、その場所への好意度を入力してください。</li>
   </ol>
   <div style="margin-top:12px;padding-top:12px;border-top:1px dashed #cddff0;">
@@ -389,12 +393,77 @@
 
   function addEntry(x, y){
     const id='pin'+(idSeq++);
-    entries.push({ id, x, y, arrive:'', depart:'', activity: activityOptions[0], extras: [], favorability: '', boarded:false });
+    entries.push({ id, x, y, arrive:'', depart:'', activity: activityOptions[0], extras: [], favorability: '', boarded:false, overnight:false });
     render();
   }
   function removeEntry(id){ entries = entries.filter(function(e){ return e.id!==id; }); render(); }
   function addExtra(e){ e.extras.push({ act:'自習', min:'' }); render(); }
   function removeExtra(e, idx){ e.extras.splice(idx,1); render(); }
+
+  // --- 時刻の検査 ---
+  let errMap = {};   // pinId -> {msgs:[], fields:[]}
+  function clearErr(e, card){
+    if(!errMap[e.id]) return;
+    delete errMap[e.id];
+    if(card){ card.classList.remove('has-error'); var em=card.querySelector('.err-msg'); if(em) em.remove(); }
+  }
+  function toMin(t){ if(!t) return null; var m=/^(\d{1,2}):(\d{2})/.exec(t); return m ? (parseInt(m[1],10)*60+parseInt(m[2],10)) : null; }
+  function fmtT(m){ m=((m%1440)+1440)%1440; var h=Math.floor(m/60), mm=m%60; return (h<10?'0':'')+h+':'+(mm<10?'0':'')+mm; }
+  const OVERLAP_TOL = 1;  // 前の地点の時刻より1分早い時刻までは認める
+  // 経路の時刻を検査する。日付またぎ（overnight）は最後の地点で指定した場合に1回だけ認める。
+  function validateTimes(){
+    var errs = {};
+    function add(e, field, msg){ var o = errs[e.id] || (errs[e.id]={msgs:[], fields:[]}); if(o.msgs.indexOf(msg)<0) o.msgs.push(msg); if(field && o.fields.indexOf(field)<0) o.fields.push(field); }
+    var n = entries.length, lastE = entries[n-1], overnight = !!lastE.overnight;
+    var dayOf = {};  // pinId -> {arrive:0/1, depart:0/1}
+    // 1. 滞在地点は着いた時刻と離れた時刻の両方
+    entries.forEach(function(e){
+      if(e.activity==='通過のみ') return;
+      if(!e.arrive) add(e,'arrive','滞在した地点です。「この地点に着いた時刻」を入力してください。');
+      if(!e.depart) add(e,'depart','滞在した地点です。「この地点を離れた時刻」を入力してください。');
+    });
+    // 2・3. 時刻を地点の順に並べて検査（同じ地点内は離れた≧着いた、地点間は前の時刻−1分まで認める）
+    var offset = 0, prev = null, wrapped = false;
+    entries.forEach(function(e, i){
+      dayOf[e.id] = {};
+      ['arrive','depart'].forEach(function(f){
+        var t = toMin(e[f]); if(t==null) return;
+        var v = t + offset;
+        if(prev){
+          var sameEntry = prev.e===e;
+          var lim = sameEntry ? prev.v : prev.v - OVERLAP_TOL;
+          if(v < lim && overnight && !wrapped){ offset = 1440; v = t + offset; wrapped = true; }
+          if(v < lim){
+            if(sameEntry){
+              add(e,'depart','「この地点を離れた時刻」（'+e.depart+'）が「着いた時刻」（'+e.arrive+'）より前になっています。');
+            } else {
+              add(e,f,'時刻（'+e[f]+'）が、前の地点'+(prev.i+1)+'の時刻（'+fmtT(prev.v)+'）より前になっています。地点の順に後の時刻になるように入力してください。');
+              add(prev.e,null,'この地点の時刻（'+fmtT(prev.v)+'）が、次の地点'+(i+1)+'の時刻より後になっています。');
+            }
+            if(t < 360 && !overnight) add(e, f, e[f]+' は深夜・早朝の時刻です。午後の時刻なら、午後（PM）として入力してください（午後1時は13:00）。日付をまたいで翌日に帰った場合は、最後の地点の「日付をまたいで、翌日に帰った」にチェックを入れてください。');
+          }
+        }
+        dayOf[e.id][f] = v>=1440 ? 1 : 0;
+        prev = {e:e, i:i, f:f, v:v};
+      });
+    });
+    // 翌日に帰った場合で、0時をまたいだ時刻が途中に無いときは、最後の地点を離れた時刻を翌日とみなす
+    if(overnight && !wrapped && lastE.depart){ dayOf[lastE.id].depart = 1; }
+    // 4. 最後の地点を離れた時刻は、最初の地点に着いた時刻より後
+    var a0 = toMin(entries[0].arrive), dL = toMin(lastE.depart);
+    if(a0!=null && dL!=null){
+      var dLv = dL + (dayOf[lastE.id].depart ? 1440 : 0);
+      if(dLv <= a0){
+        add(lastE,'depart','最後の地点を離れた時刻（'+lastE.depart+'）が、最初の地点に着いた時刻（'+entries[0].arrive+'）より後になっていません。日付をまたいで翌日に帰った場合は、下のチェックを入れてください。');
+      }
+    }
+    return {errs: errs, dayOf: dayOf, overnight: overnight};
+  }
+  function hasEarlyTimes(){
+    var list = [];
+    entries.forEach(function(e,i){ ['arrive','depart'].forEach(function(f){ var t=toMin(e[f]); if(t!=null && t<360) list.push('地点'+(i+1)+'：'+e[f]); }); });
+    return list;
+  }
 
   function render(){
     var rp=document.getElementById('reason-panel'); if(rp) rp.style.display='none';
@@ -442,6 +511,13 @@
       delBtn.onclick=function(){ removeEntry(e.id); };
       header.appendChild(delBtn);
       card.appendChild(header);
+      card.dataset.pid = e.id;
+      if(errMap[e.id]){
+        card.classList.add('has-error');
+        const em=document.createElement('div'); em.className='err-msg';
+        em.innerHTML=errMap[e.id].msgs.map(function(m){ return '⚠ '+m; }).join('<br>');
+        card.appendChild(em);
+      }
 
       // 最初の地点：定義の再掲
       if(isFirstCard){
@@ -467,6 +543,18 @@
         chk.appendChild(cb); chk.appendChild(cbTxt);
         card.appendChild(chk);
       }
+      // 最後の地点：日付をまたいだ場合
+      if(isLastCard){
+        const ochk=document.createElement('label');
+        ochk.style.cssText='display:flex;align-items:flex-start;gap:8px;margin:0 0 6px;padding:9px 10px;background:#fff;border:1px solid #cfd8e3;border-radius:6px;font-size:12.5px;line-height:1.65;cursor:pointer;font-weight:500;color:#1a1a1a;';
+        const ocb=document.createElement('input'); ocb.type='checkbox'; ocb.checked=!!e.overnight;
+        ocb.style.cssText='margin-top:2px;width:17px;height:17px;flex:0 0 auto;';
+        ocb.onchange=function(){ e.overnight=ocb.checked; clearErr(e, card); };
+        const ocbTxt=document.createElement('span');
+        ocbTxt.innerHTML='<b>日付をまたいで、翌日に帰った</b>（研究室に泊まった・徹夜した など）<br><span style="font-size:11.5px;color:#555;">チェックすると、0時を過ぎた時刻を翌日の時刻として扱います。</span>';
+        ochk.appendChild(ocb); ochk.appendChild(ocbTxt);
+        card.appendChild(ochk);
+      }
 
       const row=document.createElement('div'); row.className='field-row';
 
@@ -474,7 +562,8 @@
         const wrap=document.createElement('div');
         const label=document.createElement('label'); label.textContent=labelText;
         const input=document.createElement('input'); input.type='time'; input.value=value||'';
-        input.onchange=function(){ e[field]=input.value; };
+        if(errMap[e.id] && errMap[e.id].fields.indexOf(field)>=0) input.classList.add('time-err');
+        input.onchange=function(){ e[field]=input.value; input.classList.remove('time-err'); clearErr(e, card); };
         wrap.appendChild(label); wrap.appendChild(input);
         return wrap;
       }
@@ -488,13 +577,14 @@
       });
       actSelect.onchange=function(){
         e.activity=actSelect.value;
+        delete errMap[e.id];
         if(actSelect.value==='通過のみ'){ e.extras=[]; e.favorability=''; }
         render();
       };
       actWrap.appendChild(actLabelEl); actWrap.appendChild(actSelect);
 
-      row.appendChild(makeTimeField('到着時刻','arrive',e.arrive));
-      row.appendChild(makeTimeField('出発時刻','depart',e.depart));
+      row.appendChild(makeTimeField('この地点に着いた時刻','arrive',e.arrive));
+      row.appendChild(makeTimeField('この地点を離れた時刻','depart',e.depart));
       row.appendChild(actWrap);
       card.appendChild(row);
 
@@ -571,9 +661,13 @@
     return entries.map(function(e,i){
       return { order:i+1, x:Math.round(e.x), y:Math.round(e.y), arrive:e.arrive, depart:e.depart, activity:e.activity,
         extras:(e.extras||[]).filter(function(x){return x.act;}).map(function(x){ return { activity:x.act, minutes:Number(x.min)||0, note:(x.act==='その他'?(x.note||''):'') }; }),
-        favorability:e.favorability, note:(e.activity==='その他'?(e.activityNote||''):''), boarded:(i===entries.length-1 ? !!e.boarded : undefined) };
+        favorability:e.favorability, note:(e.activity==='その他'?(e.activityNote||''):''), boarded:(i===entries.length-1 ? !!e.boarded : undefined),
+        overnight:(i===entries.length-1 && e.overnight ? true : undefined),
+        arrive_day:(lastDayOf && lastDayOf[e.id] && lastDayOf[e.id].arrive ? 1 : undefined),
+        depart_day:(lastDayOf && lastDayOf[e.id] && lastDayOf[e.id].depart ? 1 : undefined) };
     });
   }
+  let lastDayOf = null;
   function openForm(routeArr){
     const routeText = JSON.stringify(routeArr);
     const url = FORM_BASE + '?usp=pp_url&' + ROUTE_ENTRY_ID + '=' + encodeURIComponent(routeText);
@@ -594,8 +688,35 @@
 
   submitBtn.addEventListener('click', function(){
     if(entries.length===0){ alert('経路が記録されていません。地図をタップして少なくとも1地点を記録してください。'); return; }
-    if(!entries[0].arrive){ alert('最初の地点（①）の到着時刻を入力してください。（必須）'); return; }
-    if(!entries[entries.length-1].depart){ alert('最後の地点（'+entries.length+'）の出発時刻を入力してください。（必須）'); return; }
+    if(!entries[0].arrive){ alert('最初の地点（①）の「この地点に着いた時刻」を入力してください。（必須）'); return; }
+    if(!entries[entries.length-1].depart){ alert('最後の地点（'+entries.length+'）の「この地点を離れた時刻」を入力してください。（必須）'); return; }
+
+    // 時刻の検査（送信できない誤り）
+    var vr = validateTimes();
+    errMap = vr.errs;
+    var errIds = Object.keys(errMap);
+    if(errIds.length){
+      document.getElementById('reason-panel').style.display='none';
+      render();
+      var nums = entries.map(function(e,i){ return errMap[e.id] ? (i+1) : null; }).filter(function(x){ return x!=null; });
+      alert('時刻の入力に誤りがあります（地点 ' + nums.join('・') + '）。\n赤枠の地点の説明に従って修正してから、もう一度押してください。');
+      var firstCard = list.querySelector('.entry-card.has-error');
+      if(firstCard) firstCard.scrollIntoView({behavior:'smooth', block:'center'});
+      return;
+    }
+    lastDayOf = vr.overnight ? vr.dayOf : null;
+
+    // 0:00〜5:59の時刻（12時間表記の誤りの確認。翌日に帰った場合は確認しない）
+    if(!vr.overnight){
+      var early = hasEarlyTimes();
+      if(early.length){
+        var em = '0:00〜5:59の時刻が入力されています。\n\n' + early.slice(0,6).join('\n') + (early.length>6?'\n…':'') + '\n\n'
+          + '午後の時刻なら、午後（PM）として入力してください（午後1時は13:00）。\n'
+          + '入力し直す場合は「キャンセル」を押してください。\n\n'
+          + '本当にその時刻だった場合は「OK」を押して進んでください。';
+        if(!confirm(em)) return;
+      }
+    }
 
     // 最後の地点が「帰るために通学手段に乗った場所」になっているかの確認
     var lastE = entries[entries.length-1];
